@@ -224,6 +224,16 @@ def analyze_single_stock(ticker: str):
 def render_stock_dashboard(ticker, stock_data, valuation, technical, composite, all_data):
     """渲染股票分析仪表盘"""
     
+    # 导入解读模块
+    from interpretation import (
+        generate_valuation_interpretation,
+        generate_rating_table,
+        generate_warning_alerts,
+        calculate_price_targets,
+        generate_price_levels,
+        get_overall_rating
+    )
+    
     # 标题和基本信息
     st.header(f"{stock_data.get('name', ticker)} ({ticker})")
     
@@ -240,12 +250,125 @@ def render_stock_dashboard(ticker, stock_data, valuation, technical, composite, 
     
     st.markdown("---")
     
-    # 综合信号
+    # ===== 新增：智能估值解读 =====
+    st.subheader("📝 估值诊断")
+    
+    # 综合评级
+    overall = get_overall_rating(valuation, technical)
+    col_rating, col_interpretation = st.columns([1, 3])
+    
+    with col_rating:
+        st.markdown(f"""
+        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
+            <div style="font-size: 48px;">{overall['emoji']}</div>
+            <div style="font-size: 24px; font-weight: bold;">{overall['label']}</div>
+            <div style="font-size: 16px; margin-top: 10px;">{overall['action']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col_interpretation:
+        interpretation = generate_valuation_interpretation(ticker, valuation, technical)
+        st.markdown(interpretation)
+    
+    # 风险提示
+    alerts = generate_warning_alerts(valuation, technical)
+    if alerts:
+        with st.expander("⚠️ 关键提示", expanded=True):
+            for alert in alerts:
+                st.markdown(f"• {alert}")
+    
+    st.markdown("---")
+    
+    # ===== 新增：分档评级表 =====
+    st.subheader("📊 分档评级")
+    
+    ratings = generate_rating_table(valuation, technical)
+    
+    # 创建评级表格
+    rating_cols = st.columns(len(ratings))
+    for i, r in enumerate(ratings):
+        with rating_cols[i]:
+            st.markdown(f"""
+            <div style="text-align: center; padding: 10px; border: 1px solid #ddd; border-radius: 8px;">
+                <div style="font-size: 24px;">{r['emoji']}</div>
+                <div style="font-size: 12px; color: #666;">{r['dimension']}</div>
+                <div style="font-size: 18px; font-weight: bold;">{r['value']}</div>
+                <div style="font-size: 11px; color: #888;">{r['label']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # ===== 新增：买卖点参考 =====
+    st.subheader("📍 买卖点参考")
+    
+    price_levels = generate_price_levels(
+        current_price=valuation.get('price', 0),
+        current_pe=valuation.get('pe_ttm'),
+        pe_5y_min=valuation.get('pe_5y_min'),
+        pe_5y_max=valuation.get('pe_5y_max'),
+        pe_5y_median=valuation.get('pe_5y_median')
+    )
+    
+    if price_levels:
+        level_data = []
+        for l in price_levels:
+            level_data.append({
+                "区间": l['label'],
+                "P/E范围": l['pe_range'],
+                "价格范围": l['price_range'],
+                "操作建议": l['action'],
+            })
+        
+        df_levels = pd.DataFrame(level_data)
+        
+        # 高亮当前所在区间
+        def highlight_current(row):
+            for l in price_levels:
+                if l['label'] == row['区间'] and l['is_current']:
+                    return ['background-color: #fff3cd'] * len(row)
+            return [''] * len(row)
+        
+        st.dataframe(
+            df_levels.style.apply(highlight_current, axis=1),
+            use_container_width=True,
+            hide_index=True
+        )
+    
+    # ===== 新增：情景分析 =====
+    st.subheader("🎯 目标价位情景分析")
+    
+    targets = calculate_price_targets(
+        current_price=valuation.get('price', 0),
+        current_pe=valuation.get('pe_ttm'),
+        pe_5y_median=valuation.get('pe_5y_median'),
+        pe_5y_25pct=valuation.get('pe_5y_25pct'),
+        pe_5y_75pct=valuation.get('pe_5y_75pct'),
+        peer_pe_median=valuation.get('peer_pe_median'),
+        pe_forward=valuation.get('pe_forward')
+    )
+    
+    if targets:
+        target_cols = st.columns(len(targets))
+        for i, t in enumerate(targets):
+            with target_cols[i]:
+                change_color = "green" if t['change_pct'] > 0 else "red"
+                st.markdown(f"""
+                <div style="text-align: center; padding: 15px; border: 1px solid #ddd; border-radius: 8px;">
+                    <div style="font-size: 12px; color: #666;">{t['scenario']}</div>
+                    <div style="font-size: 24px; font-weight: bold;">${t['target_price']:.0f}</div>
+                    <div style="font-size: 16px; color: {change_color};">{t['change_pct']:+.0f}%</div>
+                    <div style="font-size: 10px; color: #888; margin-top: 5px;">{t['description']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # 综合信号（保留原有）
     signal_col1, signal_col2 = st.columns(2)
     
     with signal_col1:
-        st.subheader("🎯 综合信号")
-        st.markdown(f"### {composite.get('signal', 'NEUTRAL')}")
+        st.subheader("🎯 底部/顶部信号强度")
         
         # 底部/顶部分数条
         bottom_score = composite.get('composite_bottom_score', 0)
@@ -282,7 +405,7 @@ def render_stock_dashboard(ticker, stock_data, valuation, technical, composite, 
     st.markdown("---")
     
     # 详细指标
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 估值分析", "📉 技术指标", "👥 同行比较", "📊 历史图表"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 估值详情", "📉 技术指标", "👥 同行比较", "📊 历史图表"])
     
     with tab1:
         render_valuation_tab(valuation)
