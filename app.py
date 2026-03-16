@@ -520,23 +520,26 @@ def render_market_scan():
     """全市场扫描页面"""
     st.title("📡 全市场扫描")
     
-    col1, col2 = st.columns([3, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
         st.info(f"扫描股票池: {len(STOCK_UNIVERSE)} 只股票")
     
     with col2:
+        send_telegram = st.checkbox("📱 推送到Telegram", value=True)
+    
+    with col3:
         scan_button = st.button("🔍 开始扫描", type="primary")
     
     if scan_button:
-        run_market_scan()
+        run_market_scan(send_telegram=send_telegram)
     
     # 显示结果
     if st.session_state.scan_results is not None:
         render_scan_results()
 
 
-def run_market_scan():
+def run_market_scan(send_telegram: bool = False):
     """执行全市场扫描"""
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -601,11 +604,92 @@ def run_market_scan():
     scan_results = scan_all_stocks(all_data, valuation_results, technical_results)
     st.session_state.scan_results = scan_results
     
+    progress_bar.progress(95)
+    
+    # Telegram 推送
+    if send_telegram:
+        status_text.text("正在发送Telegram预警...")
+        telegram_success = send_scan_alerts(scan_results, valuation_results, technical_results)
+        if telegram_success:
+            st.success("✅ 已推送到Telegram")
+        else:
+            st.warning("⚠️ Telegram推送失败，请检查webhook配置")
+    
     progress_bar.progress(100)
     status_text.text(f"扫描完成! 成功获取 {len(scan_results)} 只股票数据")
     time.sleep(1)
     status_text.empty()
     progress_bar.empty()
+
+
+def send_scan_alerts(scan_results, valuation_results, technical_results) -> bool:
+    """发送扫描预警到Telegram"""
+    from config import TELEGRAM_WEBHOOK_URL
+    
+    if not TELEGRAM_WEBHOOK_URL:
+        return False
+    
+    alerts_sent = 0
+    
+    try:
+        # 发送摘要
+        summary = format_scan_summary(scan_results)
+        send_telegram_alert(summary, TELEGRAM_WEBHOOK_URL)
+        alerts_sent += 1
+        
+        # 发送强底部信号 (>= 70)
+        strong_bottom = scan_results[scan_results['composite_bottom_score'] >= 70].head(5)
+        for _, row in strong_bottom.iterrows():
+            ticker = row['ticker']
+            val_result = valuation_results.get(ticker, {})
+            tech_result = technical_results.get(ticker, {})
+            
+            composite = {
+                'composite_bottom_score': row['composite_bottom_score'],
+                'composite_top_score': row['composite_top_score'],
+                'valuation_bottom_score': row.get('valuation_bottom_score', 0),
+                'valuation_top_score': row.get('valuation_top_score', 0),
+                'technical_bottom_score': row.get('technical_bottom_score', 0),
+                'technical_top_score': row.get('technical_top_score', 0),
+                'momentum_bottom_score': row.get('momentum_bottom_score', 0),
+                'momentum_top_score': row.get('momentum_top_score', 0),
+                'alert_type': 'STRONG_BOTTOM'
+            }
+            
+            msg = generate_alert_message(ticker, val_result, tech_result, composite)
+            if msg:
+                send_telegram_alert(msg, TELEGRAM_WEBHOOK_URL)
+                alerts_sent += 1
+        
+        # 发送强顶部信号 (>= 70)
+        strong_top = scan_results[scan_results['composite_top_score'] >= 70].head(5)
+        for _, row in strong_top.iterrows():
+            ticker = row['ticker']
+            val_result = valuation_results.get(ticker, {})
+            tech_result = technical_results.get(ticker, {})
+            
+            composite = {
+                'composite_bottom_score': row['composite_bottom_score'],
+                'composite_top_score': row['composite_top_score'],
+                'valuation_bottom_score': row.get('valuation_bottom_score', 0),
+                'valuation_top_score': row.get('valuation_top_score', 0),
+                'technical_bottom_score': row.get('technical_bottom_score', 0),
+                'technical_top_score': row.get('technical_top_score', 0),
+                'momentum_bottom_score': row.get('momentum_bottom_score', 0),
+                'momentum_top_score': row.get('momentum_top_score', 0),
+                'alert_type': 'STRONG_TOP'
+            }
+            
+            msg = generate_alert_message(ticker, val_result, tech_result, composite)
+            if msg:
+                send_telegram_alert(msg, TELEGRAM_WEBHOOK_URL)
+                alerts_sent += 1
+        
+        return alerts_sent > 0
+        
+    except Exception as e:
+        print(f"Telegram推送错误: {e}")
+        return False
 
 
 def render_scan_results():

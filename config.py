@@ -4,14 +4,23 @@
 """
 
 # ============================================
-# Telegram配置 (使用环境变量，保护敏感信息)
+# Telegram配置 (支持本地环境变量和Streamlit Cloud secrets)
 # ============================================
 import os
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-# Cloudflare Workers webhook (推荐)
-TELEGRAM_WEBHOOK_URL = os.getenv("TELEGRAM_WEBHOOK_URL", "")
+def get_secret(key: str, default: str = "") -> str:
+    """获取配置，优先从Streamlit secrets读取，其次从环境变量"""
+    try:
+        import streamlit as st
+        if hasattr(st, 'secrets') and key in st.secrets:
+            return st.secrets[key]
+    except:
+        pass
+    return os.getenv(key, default)
+
+TELEGRAM_BOT_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "")
+TELEGRAM_WEBHOOK_URL = get_secret("TELEGRAM_WEBHOOK_URL", "")
 
 # ============================================
 # 评分权重配置
